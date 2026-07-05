@@ -1,15 +1,16 @@
 [package]
-name = "py-whelk"
-description = "A wrapper around whelk-rs"
+name = "py-konclude"
+description = "A wrapper around konclude"
 version = "0.1.0"
-authors = ["Björn Gehrke <bjoern.gehrke+pywhelk@uzh.ch>"]
+authors = ["Björn Gehrke <bjoern.gehrke+pykonclude@uzh.ch>"]
 edition = "2024"
 
 [lib]
-name="pywhelk"
+name="pykonclude"
 crate-type=["cdylib"]
 
 [dependencies]
-horned-owl = "^1.1"
-whelk = { git = "https://github.com/b-gehrke/whelk-rs", branch = "feature/update-horned" } # Waiting for https://github.com/INCATools/whelk-rs/pull/24
+horned-owl = "^1.4"
+tempfile = "^3.0"
+libloading = "^0.8"
 py-horned-owl-reasoner = { git = "https://github.com/ontology-tools/py-horned-owl" }

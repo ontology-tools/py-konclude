@@ -1,7 +1,7 @@
 import unittest
 
 from test_base import simple_ontology
-from pywhelk import create_reasoner
+from pykonclude import create_reasoner
 from pyhornedowl.model import *
 
 

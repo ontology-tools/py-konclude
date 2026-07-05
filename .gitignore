@@ -10,3 +10,6 @@ dist
 Cargo.lock
 
 **/__pycache__
+.vscode
+wheelhouse
+pykonclude/pykonclude/
