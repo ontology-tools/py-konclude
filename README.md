@@ -1,14 +1,17 @@
 # py-konclude
 A wrapper around the [Konclude](https://github.com/konclude/Konclude) OWL DL reasoner to use it in Python via [py-horned-owl](https://github.com/ontology-tools/py-horned-owl/).
 
-## Status: direct construct mapping
-On every synchronisation (`create_reasoner` / `flush`) the ontology is built
-directly in Konclude by mapping horned-owl components to Konclude's ontology
-builder through the `konclude_kb_*` C interface (loaded from the Konclude
-shared library via `dlopen`) — no input file is written. Consistency is
-queried directly; the classification result (subclass hierarchy) is still
-exchanged through a temporary OWL 2 XML file and parsed back with horned-owl
-(direct result mapping is planned as a later step).
+## Status: incremental direct construct mapping
+The ontology is built directly in Konclude by mapping horned-owl components
+to Konclude's ontology builder through the `konclude_kb_*` C interface
+(loaded from the Konclude shared library via `dlopen`) — no input file is
+written. The knowledge base is kept alive across flushes: changes (added and
+removed axioms) are applied incrementally as Konclude ontology revisions, so
+the translation cost of a flush is proportional to the change set, not the
+ontology size. Consistency is queried directly; the classification result
+(subclass hierarchy) is still exchanged through a temporary OWL 2 XML file
+and parsed back with horned-owl (direct result mapping is planned as a later
+step).
 
 ## Requirements
 Konclude must be built as a shared library with its C interface enabled:

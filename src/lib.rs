@@ -21,8 +21,19 @@ use crate::translate::Translator;
 
 pub use crate::konclude::KONCLUDE_LIBRARY_ENV;
 
+/// A change to the ontology since the last synchronisation.
+enum PendingChange {
+    Insert(AnnotatedComponent<ArcStr>),
+    Remove(AnnotatedComponent<ArcStr>),
+}
+
 pub struct PyKoncludeReasoner {
     loaded_ontology: SetOntology<ArcStr>,
+    /// The Konclude knowledge base; kept alive across flushes so that
+    /// changes can be applied incrementally as ontology revisions.
+    kb: Option<KoncludeKb>,
+    /// Changes since the last synchronisation, in application order.
+    pending: Vec<PendingChange>,
     /// Named class subsumptions and equivalences parsed from Konclude's
     /// classification result (the written subclass hierarchy).
     inferred: Vec<Component<ArcStr>>,
@@ -38,6 +49,8 @@ impl PyReasoner for PyKoncludeReasoner {
     fn create_reasoner(ontology: SetOntology<ArcStr>) -> Self {
         let mut reasoner = PyKoncludeReasoner {
             loaded_ontology: ontology,
+            kb: None,
+            pending: Vec::new(),
             inferred: Vec::new(),
             consistent: None,
             creation_error: None,
@@ -50,19 +63,61 @@ impl PyReasoner for PyKoncludeReasoner {
 }
 
 impl PyKoncludeReasoner {
-    /// Builds the ontology in Konclude by mapping all horned-owl components
-    /// to Konclude constructs, then checks consistency and classifies.
+    /// Synchronises the Konclude knowledge base with the ontology and
+    /// recomputes consistency and the classification.
     fn synchronise(&mut self) -> Result<(), ReasonerError> {
-        let kb = KoncludeKb::new()?;
+        let result = self.try_synchronise();
+        if result.is_err() {
+            // the knowledge base may have been left with partially applied
+            // changes; rebuild from scratch on the next synchronisation
+            self.kb = None;
+            self.pending.clear();
+            self.consistent = None;
+        }
+        result
+    }
 
-        {
-            let mut translator = Translator::new(&kb);
-            for annotated_component in self.loaded_ontology.iter() {
-                for axiom in translator.axioms(&annotated_component.component)? {
-                    kb.tell(axiom)?;
+    fn try_synchronise(&mut self) -> Result<(), ReasonerError> {
+        let pending = std::mem::take(&mut self.pending);
+
+        if let Some(kb) = &self.kb {
+            if pending.is_empty() && self.consistent.is_some() {
+                // nothing changed since the last successful synchronisation
+                return Ok(());
+            }
+            // apply the changes incrementally as a new ontology revision;
+            // retracted axioms are matched structurally by rebuilding the
+            // same axiom expression
+            let mut translator = Translator::new(kb);
+            for change in &pending {
+                match change {
+                    PendingChange::Insert(annotated_component) => {
+                        for axiom in translator.axioms(&annotated_component.component)? {
+                            kb.tell(axiom)?;
+                        }
+                    }
+                    PendingChange::Remove(annotated_component) => {
+                        for axiom in translator.axioms(&annotated_component.component)? {
+                            kb.retract(axiom)?;
+                        }
+                    }
                 }
             }
+        } else {
+            // initial (or recovery) synchronisation: build the full ontology
+            let kb = KoncludeKb::new()?;
+            {
+                let mut translator = Translator::new(&kb);
+                for annotated_component in self.loaded_ontology.iter() {
+                    for axiom in translator.axioms(&annotated_component.component)? {
+                        kb.tell(axiom)?;
+                    }
+                }
+            }
+            self.kb = Some(kb);
         }
+
+        let kb = self.kb.as_ref().unwrap();
         kb.flush()?;
 
         let consistent = kb.is_consistent()?;
@@ -179,11 +234,19 @@ impl PyKoncludeReasoner {
 
 impl OntologyIndex<ArcStr, ArcAnnotatedComponent> for PyKoncludeReasoner {
     fn index_insert(&mut self, cmp: ArcAnnotatedComponent) -> bool {
-        self.loaded_ontology.insert((*cmp).clone())
+        let inserted = self.loaded_ontology.insert((*cmp).clone());
+        if inserted {
+            self.pending.push(PendingChange::Insert((*cmp).clone()));
+        }
+        inserted
     }
 
     fn index_remove(&mut self, cmp: &AnnotatedComponent<ArcStr>) -> bool {
-        self.loaded_ontology.remove(cmp)
+        let removed = self.loaded_ontology.remove(cmp);
+        if removed {
+            self.pending.push(PendingChange::Remove(cmp.clone()));
+        }
+        removed
     }
 }
 
@@ -379,6 +442,38 @@ mod tests {
         let reasoner = PyKoncludeReasoner::create_reasoner(ontology);
 
         assert!(!reasoner.is_consistent().unwrap());
+    }
+
+    #[test]
+    fn test_incremental_insert_and_remove() {
+        let (ontology, build) = get_ontology();
+
+        let mut reasoner = PyKoncludeReasoner::create_reasoner(ontology);
+        assert!(reasoner.is_consistent().unwrap());
+
+        // incrementally add C subclassof A; the change must only become
+        // visible after a flush
+        let component: AnnotatedComponent<ArcStr> = AnnotatedComponent {
+            component: Component::SubClassOf(SubClassOf {
+                sub: build.class("https://example.com/C").into(),
+                sup: build.class("https://example.com/A").into(),
+            }),
+            ann: Default::default(),
+        };
+        let entailment = Component::SubClassOf(SubClassOf {
+            sub: build.class("https://example.com/C").into(),
+            sup: build.class("https://example.com/A").into(),
+        });
+
+        reasoner.index_insert(component.clone().into());
+        assert!(!reasoner.is_entailed(&entailment).unwrap());
+        reasoner.flush().unwrap();
+        assert!(reasoner.is_entailed(&entailment).unwrap());
+
+        // incrementally retract it again
+        reasoner.index_remove(&component);
+        reasoner.flush().unwrap();
+        assert!(!reasoner.is_entailed(&entailment).unwrap());
     }
 
     #[test]
