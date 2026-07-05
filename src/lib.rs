@@ -1,80 +1,25 @@
+mod konclude;
+mod translate;
+
 use std::collections::HashSet;
-use std::ffi::CString;
 use std::fs::File;
-use std::io::{BufReader, BufWriter};
-use std::os::raw::{c_char, c_int};
-use std::path::Path;
-use std::sync::OnceLock;
+use std::io::BufReader;
 
 use horned_owl::io::ParserConfiguration;
 use horned_owl::model::{
     AnnotatedComponent, ArcAnnotatedComponent, ArcStr, Class, ClassExpression, Component,
     MutableOntology, SubClassOf,
 };
-use horned_owl::ontology::component_mapped::ComponentMappedOntology;
 use horned_owl::ontology::indexed::OntologyIndex;
 use horned_owl::ontology::set::SetOntology;
 use horned_owl::{model as ho, vocab};
 
-use libloading::{Library, Symbol};
 use pyhornedowlreasoner::{PyReasoner, Reasoner, ReasonerError, export_py_reasoner};
 
-/// Environment variable pointing to the Konclude shared library
-/// (`libKonclude.so` / `Konclude.dll` / `libKonclude.dylib`). If unset, the
-/// platform default library name is resolved through the regular dynamic
-/// linker search path.
-pub const KONCLUDE_LIBRARY_ENV: &str = "KONCLUDE_LIBRARY_PATH";
+use crate::konclude::KoncludeKb;
+use crate::translate::Translator;
 
-type KoncludeRunFn = unsafe extern "C" fn(c_int, *const *const c_char) -> c_int;
-
-/// The Konclude library is loaded once per process and never unloaded: the
-/// first `konclude_run` call creates a QCoreApplication and worker threads
-/// inside the library which must stay alive for the whole process lifetime.
-static KONCLUDE_LIBRARY: OnceLock<Result<Library, String>> = OnceLock::new();
-
-fn konclude_library() -> Result<&'static Library, ReasonerError> {
-    KONCLUDE_LIBRARY
-        .get_or_init(|| {
-            let path = std::env::var_os(KONCLUDE_LIBRARY_ENV)
-                .unwrap_or_else(|| libloading::library_filename("Konclude"));
-            unsafe { Library::new(&path) }.map_err(|e| {
-                format!(
-                    "Failed to load Konclude library '{}' (set {} to its location): {}",
-                    path.to_string_lossy(),
-                    KONCLUDE_LIBRARY_ENV,
-                    e
-                )
-            })
-        })
-        .as_ref()
-        .map_err(|e| ReasonerError::Other(e.clone()))
-}
-
-/// Runs Konclude in-process with command-line style arguments (without a
-/// program name), e.g. `["classification", "-i", "in.owl.xml", "-o", "out.owl.xml"]`.
-fn konclude_run(args: &[&str]) -> Result<(), ReasonerError> {
-    let library = konclude_library()?;
-    let run: Symbol<KoncludeRunFn> = unsafe { library.get(b"konclude_run\0") }
-        .map_err(|e| ReasonerError::Other(format!("Failed to resolve 'konclude_run': {}", e)))?;
-
-    let c_args: Vec<CString> = args
-        .iter()
-        .map(|s| {
-            CString::new(*s)
-                .map_err(|e| ReasonerError::Other(format!("Invalid argument '{}': {}", s, e)))
-        })
-        .collect::<Result<_, _>>()?;
-    let c_argv: Vec<*const c_char> = c_args.iter().map(|s| s.as_ptr()).collect();
-
-    let ret = unsafe { run(c_argv.len() as c_int, c_argv.as_ptr()) };
-    if ret != 0 {
-        return Err(ReasonerError::Other(format!(
-            "Konclude returned non-zero exit code {} for arguments {:?}",
-            ret, args
-        )));
-    }
-    Ok(())
-}
+pub use crate::konclude::KONCLUDE_LIBRARY_ENV;
 
 pub struct PyKoncludeReasoner {
     loaded_ontology: SetOntology<ArcStr>,
@@ -105,41 +50,22 @@ impl PyReasoner for PyKoncludeReasoner {
 }
 
 impl PyKoncludeReasoner {
-    /// Writes the current ontology to a temporary file, runs Konclude on it
-    /// (consistency check + classification) and parses the results back.
+    /// Builds the ontology in Konclude by mapping all horned-owl components
+    /// to Konclude constructs, then checks consistency and classifies.
     fn synchronise(&mut self) -> Result<(), ReasonerError> {
-        let dir = tempfile::tempdir()
-            .map_err(|e| ReasonerError::Other(format!("Failed to create temp dir: {}", e)))?;
-        let input = dir.path().join("ontology.owl.xml");
+        let kb = KoncludeKb::new()?;
 
-        self.write_ontology(&input)?;
-        let input_str = path_str(&input)?.to_string();
+        {
+            let mut translator = Translator::new(&kb);
+            for annotated_component in self.loaded_ontology.iter() {
+                for axiom in translator.axioms(&annotated_component.component)? {
+                    kb.tell(axiom)?;
+                }
+            }
+        }
+        kb.flush()?;
 
-        // Consistency: Konclude writes a file containing "true" or "false".
-        let consistency_output = dir.path().join("consistency.txt");
-        // Note: "-w AUTO" (worker count) is required. With the default
-        // configuration (ProcessorCount=1, AdaptThreadPoolSizeProcessorCount
-        // =TRUE, BlockingThreadPoolThreadsCount=1) Konclude blocks the only
-        // thread of the Qt global thread pool and deadlocks as soon as the
-        // backend representative memory cache dispatches work to the pool.
-        konclude_run(&[
-            "consistency",
-            "-w",
-            "AUTO",
-            "-i",
-            &input_str,
-            "-o",
-            path_str(&consistency_output)?,
-        ])?;
-        let consistent = std::fs::read_to_string(&consistency_output)
-            .map_err(|e| {
-                ReasonerError::Other(format!("Failed to read consistency result: {}", e))
-            })?
-            .trim()
-            .parse::<bool>()
-            .map_err(|e| {
-                ReasonerError::Other(format!("Failed to parse consistency result: {}", e))
-            })?;
+        let consistent = kb.is_consistent()?;
         self.consistent = Some(consistent);
         self.creation_error = None;
         self.inferred.clear();
@@ -155,19 +81,13 @@ impl PyKoncludeReasoner {
             return Ok(());
         }
 
-        // Classification: Konclude writes the inferred subclass hierarchy as
-        // an OWL 2 XML ontology consisting of SubClassOf/EquivalentClasses
-        // axioms between named classes.
+        // Konclude writes the inferred subclass hierarchy as an OWL 2 XML
+        // ontology consisting of SubClassOf/EquivalentClasses axioms
+        // between named classes.
+        let dir = tempfile::tempdir()
+            .map_err(|e| ReasonerError::Other(format!("Failed to create temp dir: {}", e)))?;
         let hierarchy_output = dir.path().join("hierarchy.owl.xml");
-        konclude_run(&[
-            "classification",
-            "-w",
-            "AUTO",
-            "-i",
-            &input_str,
-            "-o",
-            path_str(&hierarchy_output)?,
-        ])?;
+        kb.classify(&hierarchy_output)?;
 
         let file = File::open(&hierarchy_output).map_err(|e| {
             ReasonerError::Other(format!("Failed to open classification result: {}", e))
@@ -187,15 +107,6 @@ impl PyKoncludeReasoner {
             })
             .collect();
 
-        Ok(())
-    }
-
-    fn write_ontology(&self, path: &Path) -> Result<(), ReasonerError> {
-        let file = File::create(path)
-            .map_err(|e| ReasonerError::Other(format!("Failed to create temp file: {}", e)))?;
-        let ontology: ComponentMappedOntology<ArcStr, ArcAnnotatedComponent> =
-            ComponentMappedOntology::from(self.loaded_ontology.clone());
-        horned_owl::io::owx::writer::write(BufWriter::new(file), &ontology, None)?;
         Ok(())
     }
 
@@ -372,12 +283,6 @@ impl Reasoner<ArcStr, ArcAnnotatedComponent> for PyKoncludeReasoner {
     }
 }
 
-fn path_str(path: &Path) -> Result<&str, ReasonerError> {
-    path.to_str().ok_or_else(|| {
-        ReasonerError::Other(format!("Non UTF-8 temp file path: {}", path.display()))
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -474,5 +379,45 @@ mod tests {
         let reasoner = PyKoncludeReasoner::create_reasoner(ontology);
 
         assert!(!reasoner.is_consistent().unwrap());
+    }
+
+    #[test]
+    fn test_expressions() {
+        // exercises composite expressions through the construct mapping:
+        // r subPropertyOf s, A = some r C, B = some s C  =>  A subclassof B
+        let build = Build::<ArcStr>::new();
+        let mut ontology = SetOntology::new();
+        let a = build.class("https://example.com/A");
+        let b = build.class("https://example.com/B");
+        let c = build.class("https://example.com/C");
+        let r = build.object_property("https://example.com/r");
+        let s = build.object_property("https://example.com/s");
+        ontology.insert(ho::SubObjectPropertyOf {
+            sub: ho::SubObjectPropertyExpression::ObjectPropertyExpression(r.clone().into()),
+            sup: s.clone().into(),
+        });
+        ontology.insert(ho::EquivalentClasses(vec![
+            a.clone().into(),
+            ClassExpression::ObjectSomeValuesFrom {
+                ope: r.into(),
+                bce: Box::new(c.clone().into()),
+            },
+        ]));
+        ontology.insert(ho::EquivalentClasses(vec![
+            b.clone().into(),
+            ClassExpression::ObjectSomeValuesFrom {
+                ope: s.into(),
+                bce: Box::new(c.into()),
+            },
+        ]));
+
+        let reasoner = PyKoncludeReasoner::create_reasoner(ontology);
+
+        assert!(reasoner
+            .is_entailed(&Component::SubClassOf(SubClassOf {
+                sub: a.into(),
+                sup: b.into(),
+            }))
+            .unwrap());
     }
 }
