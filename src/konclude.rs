@@ -2,7 +2,6 @@
 
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int, c_void};
-use std::path::Path;
 use std::sync::OnceLock;
 
 use libloading::Library;
@@ -85,6 +84,23 @@ pub const AXIOM_NEGATIVE_DATA_PROPERTY_ASSERTION: c_int = 228;
 pub const AXIOM_SAME_INDIVIDUAL: c_int = 229;
 pub const AXIOM_DIFFERENT_INDIVIDUALS: c_int = 230;
 
+/// Mirrors KoncludeClassHierarchyCallbacks from KoncludeCInterface.h.
+#[repr(C)]
+struct KoncludeClassHierarchyCallbacks {
+    user_data: *mut c_void,
+    node: unsafe extern "C" fn(*mut c_void, *const *const c_char, c_int),
+    edge: unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char),
+}
+
+/// The classified subclass hierarchy: equivalence groups of class IRIs (the
+/// first IRI of a group is its representative) and direct subsumption edges
+/// between group representatives.
+#[derive(Debug, Default)]
+pub struct ClassHierarchy {
+    pub nodes: Vec<Vec<String>>,
+    pub edges: Vec<(String, String)>,
+}
+
 /// Resolved function pointers of the Konclude C interface.
 struct KoncludeApi {
     kb_create: unsafe extern "C" fn() -> KbPtr,
@@ -96,7 +112,7 @@ struct KoncludeApi {
     kb_retract: unsafe extern "C" fn(KbPtr, ExprPtr) -> c_int,
     kb_flush: unsafe extern "C" fn(KbPtr) -> c_int,
     kb_is_consistent: unsafe extern "C" fn(KbPtr) -> c_int,
-    kb_classify: unsafe extern "C" fn(KbPtr, *const c_char) -> c_int,
+    kb_class_hierarchy: unsafe extern "C" fn(KbPtr, *const KoncludeClassHierarchyCallbacks) -> c_int,
 }
 
 /// The Konclude library is loaded once per process and never unloaded: the
@@ -143,7 +159,7 @@ fn api() -> Result<&'static KoncludeApi, ReasonerError> {
                     kb_retract: resolve(library, b"konclude_kb_retract\0")?,
                     kb_flush: resolve(library, b"konclude_kb_flush\0")?,
                     kb_is_consistent: resolve(library, b"konclude_kb_is_consistent\0")?,
-                    kb_classify: resolve(library, b"konclude_kb_classify\0")?,
+                    kb_class_hierarchy: resolve(library, b"konclude_kb_class_hierarchy\0")?,
                 })
             }
         })
@@ -274,18 +290,50 @@ impl KoncludeKb {
         }
     }
 
-    pub fn classify(&self, output_file: &Path) -> Result<(), ReasonerError> {
+    pub fn class_hierarchy(&self) -> Result<ClassHierarchy, ReasonerError> {
         let api = api()?;
-        let path_str = output_file.to_str().ok_or_else(|| {
-            ReasonerError::Other(format!("Non UTF-8 path: {}", output_file.display()))
-        })?;
-        let path_c = to_cstring(path_str)?;
-        if unsafe { (api.kb_classify)(self.ptr, path_c.as_ptr()) } != 0 {
+
+        unsafe extern "C" fn node_callback(
+            user_data: *mut c_void,
+            iris: *const *const c_char,
+            count: c_int,
+        ) {
+            let hierarchy = unsafe { &mut *(user_data as *mut ClassHierarchy) };
+            let mut group = Vec::with_capacity(count as usize);
+            for i in 0..count as usize {
+                let iri = unsafe { std::ffi::CStr::from_ptr(*iris.add(i)) };
+                group.push(iri.to_string_lossy().into_owned());
+            }
+            hierarchy.nodes.push(group);
+        }
+
+        unsafe extern "C" fn edge_callback(
+            user_data: *mut c_void,
+            sub: *const c_char,
+            sup: *const c_char,
+        ) {
+            let hierarchy = unsafe { &mut *(user_data as *mut ClassHierarchy) };
+            let sub = unsafe { std::ffi::CStr::from_ptr(sub) }
+                .to_string_lossy()
+                .into_owned();
+            let sup = unsafe { std::ffi::CStr::from_ptr(sup) }
+                .to_string_lossy()
+                .into_owned();
+            hierarchy.edges.push((sub, sup));
+        }
+
+        let mut hierarchy = ClassHierarchy::default();
+        let callbacks = KoncludeClassHierarchyCallbacks {
+            user_data: &mut hierarchy as *mut ClassHierarchy as *mut c_void,
+            node: node_callback,
+            edge: edge_callback,
+        };
+        if unsafe { (api.kb_class_hierarchy)(self.ptr, &callbacks) } != 0 {
             return Err(ReasonerError::Other(
                 "Konclude classification failed".to_string(),
             ));
         }
-        Ok(())
+        Ok(hierarchy)
     }
 }
 

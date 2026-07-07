@@ -11,6 +11,5 @@ crate-type=["cdylib"]
 
 [dependencies]
 horned-owl = "^1.4"
-tempfile = "^3.0"
 libloading = "^0.8"
 py-horned-owl-reasoner = { git = "https://github.com/ontology-tools/py-horned-owl" }

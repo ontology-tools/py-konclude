@@ -2,10 +2,7 @@ mod konclude;
 mod translate;
 
 use std::collections::HashSet;
-use std::fs::File;
-use std::io::BufReader;
 
-use horned_owl::io::ParserConfiguration;
 use horned_owl::model::{
     AnnotatedComponent, ArcAnnotatedComponent, ArcStr, Class, ClassExpression, Component,
     MutableOntology, SubClassOf,
@@ -34,8 +31,8 @@ pub struct PyKoncludeReasoner {
     kb: Option<KoncludeKb>,
     /// Changes since the last synchronisation, in application order.
     pending: Vec<PendingChange>,
-    /// Named class subsumptions and equivalences parsed from Konclude's
-    /// classification result (the written subclass hierarchy).
+    /// Named class subsumptions and equivalences from Konclude's
+    /// classified taxonomy.
     inferred: Vec<Component<ArcStr>>,
     /// Consistency as of the last synchronisation (`None` if it never succeeded).
     consistent: Option<bool>,
@@ -136,31 +133,29 @@ impl PyKoncludeReasoner {
             return Ok(());
         }
 
-        // Konclude writes the inferred subclass hierarchy as an OWL 2 XML
-        // ontology consisting of SubClassOf/EquivalentClasses axioms
+        // The classified taxonomy is reported directly through the C
+        // interface as equivalence groups and direct subsumption edges
         // between named classes.
-        let dir = tempfile::tempdir()
-            .map_err(|e| ReasonerError::Other(format!("Failed to create temp dir: {}", e)))?;
-        let hierarchy_output = dir.path().join("hierarchy.owl.xml");
-        kb.classify(&hierarchy_output)?;
-
-        let file = File::open(&hierarchy_output).map_err(|e| {
-            ReasonerError::Other(format!("Failed to open classification result: {}", e))
-        })?;
-        let mut reader = BufReader::new(file);
-        let (result_ontology, _): (SetOntology<ArcStr>, _) =
-            horned_owl::io::owx::reader::read(&mut reader, ParserConfiguration::default())?;
-
-        self.inferred = result_ontology
-            .into_iter()
-            .map(|ac| ac.component)
-            .filter(|c| {
-                matches!(
-                    c,
-                    Component::SubClassOf(_) | Component::EquivalentClasses(_)
-                )
-            })
-            .collect();
+        let hierarchy = kb.class_hierarchy()?;
+        let build = ho::Build::<ArcStr>::new();
+        for group in &hierarchy.nodes {
+            if group.len() > 1 {
+                self.inferred.push(Component::EquivalentClasses(
+                    ho::EquivalentClasses(
+                        group
+                            .iter()
+                            .map(|iri| build.class(iri.as_str()).into())
+                            .collect(),
+                    ),
+                ));
+            }
+        }
+        for (sub, sup) in &hierarchy.edges {
+            self.inferred.push(Component::SubClassOf(SubClassOf {
+                sub: build.class(sub.as_str()).into(),
+                sup: build.class(sup.as_str()).into(),
+            }));
+        }
 
         Ok(())
     }
