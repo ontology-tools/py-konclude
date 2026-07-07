@@ -14,7 +14,7 @@ authors = [
 ]
 dependencies = [
     "cffi",
-    "py-horned-owl >= 1.3.0.dev1",
+    "py-horned-owl >= 1.4.0",
 ]
 classifiers = [
     "Programming Language :: Rust",
@@ -22,4 +22,7 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: PyPy",
 ]
 
-
+[tool.maturin]
+# Bundle the Konclude shared library (copied to pykonclude/lib/ by the
+# wheel build, see `make wheel`) so the wheel is self-contained.
+include = [{ path = "pykonclude/lib/*", format = "wheel" }]

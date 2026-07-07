@@ -24,13 +24,20 @@ make -f Makefile-clib -j$(nproc)
 # produces Release/libKonclude.so
 ```
 
-At runtime, point `KONCLUDE_LIBRARY_PATH` at the shared library (or make it
-resolvable through the regular dynamic linker search path, e.g.
-`LD_LIBRARY_PATH`):
+(or `make konclude` in this repository, with `KONCLUDE_DIR` pointing at the
+Konclude checkout, default `../Konclude`).
+
+Wheels built with `make wheel` bundle `libKonclude.so`, so nothing needs to
+be installed separately at runtime. When the library is not bundled (e.g. a
+plain `cargo test` or `pip install .` without bundling), point
+`KONCLUDE_LIBRARY_PATH` at it (or make it resolvable through the regular
+dynamic linker search path, e.g. `LD_LIBRARY_PATH`):
 
 ```bash
 export KONCLUDE_LIBRARY_PATH=/path/to/Konclude/Release/libKonclude.so
 ```
+
+The environment variable always takes precedence over the bundled library.
 
 ## Usage
 ```python
@@ -46,13 +53,33 @@ reasoner.inferred_axioms()
 ```
 
 ## Installation
-Build the shared library with `cargo build --release` and install the Python
-package with `pip install .`:
+
+### Building a publishable wheel
+`make wheel` builds a self-contained manylinux wheel that bundles
+`libKonclude.so` together with its shared library dependencies (Qt, ICU,
+...). It requires [maturin](https://www.maturin.rs), `uvx` (for
+[auditwheel](https://github.com/pypa/auditwheel)) and `patchelf`:
 
 ```bash
-make
-pip install .
+make konclude   # build libKonclude.so in $KONCLUDE_DIR (default ../Konclude)
+make wheel      # bundle it and build + repair the wheel
+pip install wheelhouse/py_konclude-*.whl
 ```
+
+The repaired wheel in `wheelhouse/` is the artifact to upload to PyPI (e.g.
+with `twine upload` or `maturin upload`).
+
+**Note:** the reasoner plugin is loaded by py-horned-owl across a Rust ABI
+boundary; the installed `py-horned-owl` wheel must be built with the same
+Rust toolchain and the same `horned-owl`/`py-horned-owl-reasoner` crate
+versions as this package, otherwise loading the reasoner is undefined
+behaviour. Keep the py-konclude release in lockstep with the py-horned-owl
+release it is built against.
+
+### From source
+Install the Python package directly with `pip install .` (the wheel then
+only bundles Konclude if `pykonclude/lib/libKonclude.so` exists, see above;
+otherwise set `KONCLUDE_LIBRARY_PATH` at runtime).
 
 ## Tests
 ```bash
