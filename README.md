@@ -1,6 +1,13 @@
 # py-konclude
 A wrapper around the [Konclude](https://github.com/konclude/Konclude) OWL DL reasoner to use it in Python via [py-horned-owl](https://github.com/ontology-tools/py-horned-owl/).
 
+This package is a thin Python-binding layer over the native
+[konclude-rs](../konclude-rs) crate: `konclude-rs` does the reasoning
+(loading Konclude, translating the ontology, querying results), while
+py-konclude adapts its `KoncludeReasoner` to py-horned-owl's reasoner
+interface and packages it as a Python wheel. To use Konclude directly from
+Rust, depend on `konclude-rs` instead.
+
 ## Status: incremental direct construct and result mapping
 The ontology is built directly in Konclude by mapping horned-owl components
 to Konclude's ontology builder through the `konclude_kb_*` C interface

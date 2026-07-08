@@ -11,5 +11,5 @@ crate-type=["cdylib"]
 
 [dependencies]
 horned-owl = "^1.4"
-libloading = "^0.8"
+konclude-rs = { path = "../konclude-rs" }
 py-horned-owl-reasoner = { git = "https://github.com/ontology-tools/py-horned-owl" }
