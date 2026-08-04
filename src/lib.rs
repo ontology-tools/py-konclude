@@ -50,7 +50,9 @@ impl Reasoner<ArcStr, ArcAnnotatedComponent> for PyKoncludeReasoner {
     }
 
     fn inferred_axioms(&self) -> Box<dyn Iterator<Item = Component<ArcStr>>> {
-        Box::new(self.0.inferred_axioms().into_iter())
+        // The trait offers no error channel here; classification failures
+        // surface as an empty result (and as errors on the other queries).
+        Box::new(self.0.inferred_axioms().unwrap_or_default().into_iter())
     }
 
     fn is_consistent(&self) -> Result<bool, ReasonerError> {
