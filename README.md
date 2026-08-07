@@ -28,7 +28,7 @@ Konclude must be built as a shared library with its C interface enabled:
 cd Konclude
 qmake -o Makefile-clib KoncludeCLIB.pro
 make -f Makefile-clib -j$(nproc)
-# produces Release/libKonclude.so
+# produces Release-clib/libKonclude.so
 ```
 
 (or `make konclude` in this repository, with `KONCLUDE_DIR` pointing at the
@@ -41,7 +41,7 @@ plain `cargo test` or `pip install .` without bundling), point
 dynamic linker search path, e.g. `LD_LIBRARY_PATH`):
 
 ```bash
-export KONCLUDE_LIBRARY_PATH=/path/to/Konclude/Release/libKonclude.so
+export KONCLUDE_LIBRARY_PATH=/path/to/Konclude/Release-clib/libKonclude.so
 ```
 
 The environment variable always takes precedence over the bundled library.

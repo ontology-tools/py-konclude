@@ -1,6 +1,6 @@
 # Location of the Konclude checkout used to build/bundle libKonclude.so
 KONCLUDE_DIR ?= ../Konclude
-KONCLUDE_LIB = $(KONCLUDE_DIR)/Release/libKonclude.so
+KONCLUDE_LIB = $(KONCLUDE_DIR)/Release-clib/libKonclude.so
 
 .PHONY: all konclude bundle wheel test clean
 
