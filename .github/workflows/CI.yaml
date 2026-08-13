@@ -11,17 +11,27 @@ on:
     types:
       - published
 
+env:
+  # Konclude revision compiled into the wheels. Pinned rather than tracking a
+  # branch so that builds are reproducible and the build cache below has a
+  # meaningful key -- bump it to pick up reasoner changes.
+  KONCLUDE_REF: 0906e212047f1108c75ad4b9352faeacf19c49a0
+
 jobs:
   build_wheels:
     name: Build wheels for ${{ matrix.os }}
     runs-on: ${{ matrix.runs-on }}
     strategy:
+      # one platform's toolchain breaking should not hide the state of the rest
+      fail-fast: false
       matrix:
         include:
           - os: linux-intel
             runs-on: ubuntu-latest
+            manylinux-image: quay.io/pypa/manylinux_2_28_x86_64
           - os: linux-arm
             runs-on: ubuntu-24.04-arm
+            manylinux-image: quay.io/pypa/manylinux_2_28_aarch64
           - os: windows-intel
             runs-on: windows-latest
         #   - os: windows-arm
@@ -29,24 +39,65 @@ jobs:
           - os: macos-intel
             # macos-13 was the last x86_64 runner
             runs-on: macos-13
+            # Homebrew's qt@5 bottle is built for the runner's OS, so the
+            # wheel cannot claim compatibility with anything older
+            macos-target: '13.0'
           - os: macos-arm
             # macos-14+ (including latest) are ARM64 runners
             runs-on: macos-latest
+            macos-target: '14.0'
 
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check out Konclude
+        uses: actions/checkout@v4
+        with:
+          repository: ontology-tools/Konclude
+          ref: ${{ env.KONCLUDE_REF }}
+          path: Konclude
+
+      # Konclude is ~1300 translation units; a cold build runs well over 20
+      # minutes on every platform. ci/build-konclude.{sh,bat} short-circuit
+      # when the library is already in place, so a hit skips the build.
+      - name: Cache libKonclude
+        id: konclude-cache
+        uses: actions/cache@v4
+        with:
+          path: pykonclude/lib
+          key: konclude-${{ matrix.os }}-${{ env.KONCLUDE_REF }}
+
+      # On Linux, cibuildwheel's before-all runs inside a container whose
+      # filesystem is thrown away, so the library would never reach the cache
+      # above. Run the build ourselves in the *same* manylinux image (pinned to
+      # match [tool.cibuildwheel.linux] in pyproject.toml) with the workspace
+      # bind-mounted; before-all then finds the library and short-circuits.
+      - name: Build libKonclude
+        if: runner.os == 'Linux' && steps.konclude-cache.outputs.cache-hit != 'true'
+        run: |
+          docker run --rm -v "$PWD:/project" -w /project \
+            ${{ matrix.manylinux-image }} bash ci/build-konclude.sh
+          # the container runs as root; hand the artefacts back to the runner
+          sudo chown -R "$(id -u):$(id -g)" pykonclude/lib Konclude
+
+      # macOS gets Qt from Homebrew inside ci/build-konclude.sh. Windows has no
+      # equivalent, so install Qt and an MSVC environment for nmake here.
+      - name: Install Qt 5
+        if: runner.os == 'Windows'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '5.15.2'
+          arch: win64_msvc2019_64
+
+      - name: Set up MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Build wheels
         uses: pypa/cibuildwheel@v3.0.1
         env:
-          MACOSX_DEPLOYMENT_TARGET: 10.12
-          CIBW_PLATFORM: ${{ matrix.platform || 'auto' }}
-          CIBW_SKIP: cp310-musllinux_*
-        # Can also be configured directly, using `with:`
-        # with:
-        #   package-dir: .
-        #   output-dir: wheelhouse
-        #   config-file: "{package}/pyproject.toml"
+          # everything else lives in [tool.cibuildwheel] in pyproject.toml
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos-target }}
 
       - uses: actions/upload-artifact@v4
         with:
@@ -72,6 +123,7 @@ jobs:
     needs: [build_wheels]
     runs-on: ${{ matrix.runs-on }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: linux-intel
@@ -104,7 +156,9 @@ jobs:
           merge-multiple: true
 
       - name: Install dependencies
-        run: pip install --find-links=dist pytest py-whelk
+        # --only-binary: dist also holds the sdist, and silently building that
+        # from source here would test a different artefact than we ship
+        run: pip install --only-binary=py-konclude --find-links=dist pytest py-konclude
       - name: Test with pytest
         run: pytest --doctest-modules --junitxml=junit/test-results-${{ matrix.os }}.xml test/
       - name: Upload pytest test results
@@ -120,7 +174,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/py-whelk
+      url: https://pypi.org/p/py-konclude
     permissions:
       id-token: write
     if: github.event_name == 'release' && github.event.action == 'published'
@@ -140,7 +194,7 @@ jobs:
 
     environment:
       name: testpypi
-      url: https://test.pypi.org/p/py-whelk
+      url: https://test.pypi.org/p/py-konclude
 
     permissions:
       id-token: write  # IMPORTANT: mandatory for trusted publishing
@@ -156,3 +210,6 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
+          # this job is unconditional, so every push to main re-uploads the
+          # same version -- don't fail the workflow over it
+          skip-existing: true

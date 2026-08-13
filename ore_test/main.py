@@ -141,14 +141,26 @@ def _run_task(task: str, reasoner: reasoners.Reasoner, output: Optional[str],
             print(f"consistent {'true' if consistent else 'false'}")
         return EXIT_OK if consistent else EXIT_INCONSISTENT
 
+    # An inconsistent ontology entails everything and so has no hierarchy to
+    # compare: report the verdict rather than a hash, the way run_native.py
+    # does, or the two reports could never agree on these ontologies. Asking
+    # first is free -- the classification is lazy and needs the consistency
+    # check anyway -- and it lets a signature-only run skip classifying.
+    consistent = reasoner.is_consistent()
+
     wanted = set(evaluation.TASK_AXIOMS[task])
-    components = [c for c in reasoner.inferred_axioms()
-                 if type(c).__name__ in wanted]
+    components = []
+    if consistent or write_result:
+        components = [c for c in reasoner.inferred_axioms()
+                     if type(c).__name__ in wanted]
     if write_result:
         _write(_inferred_ontology(components), output)
     if signature:
-        digest, count = evaluation.axioms_signature(components)
-        print(f"axioms {count} {digest}")
+        if consistent:
+            digest, count = evaluation.axioms_signature(components)
+            print(f"axioms {count} {digest}")
+        else:
+            print(evaluation.INCONSISTENT_LINE)
     return EXIT_OK
 
 
@@ -273,6 +285,14 @@ def _interpret(item: BatchItem, task: str,
                elapsed: float) -> BatchResult:
     """Turn a finished subprocess into a :class:`BatchResult`."""
     sig_line = _last_nonempty(proc.stdout)
+
+    # a hierarchy task over an inconsistent ontology reports the verdict, not a
+    # hash; record it exactly as run_native.py does (no answer, no count) so
+    # compare.py reads the same "false" out of both reports
+    if task != "consistency" and sig_line == evaluation.INCONSISTENT_LINE:
+        return BatchResult(item.profile, item.name, "inconsistent", elapsed,
+                           detail="ontology inconsistent")
+
     answer = evaluation.parse_line(task, sig_line) if sig_line else None
 
     if answer is None:
@@ -355,6 +375,12 @@ def _score(result: BatchResult,
         return evaluation.Correctness.TIMEOUT
     if result.status == "error":
         return evaluation.Correctness.ERROR
+    if result.status == "inconsistent" and result.answer is None:
+        # inconsistent under a hierarchy task: compare the verdict, not a hash
+        return (evaluation.Correctness.CORRECT
+                if expectation is not None and expectation.expected == "false"
+                else evaluation.Correctness.UNEXPECTED if expectation is None
+                else evaluation.Correctness.INCORRECT)
     return evaluation.verdict(result.answer, expectation)
 
 
@@ -435,14 +461,19 @@ def generate_expected(task: str, dataset: str, profiles: Sequence[str],
     for i, item in enumerate(items, 1):
         result = process_item(item, task, reasoner_name, timeout, None,
                               memory_bytes)
-        if result.answer is None:
+        answer = result.answer
+        if answer is None and result.status == "inconsistent":
+            # hierarchy task, inconsistent ontology: the verdict is the answer
+            # (run_native.py writes its gold the same way)
+            answer = "false"
+        if answer is None:
             skipped += 1
             print(f"[{i}/{len(items)}] {item.profile}/{item.name}: "
                   f"{result.status} - skipped ({result.detail})", file=sys.stderr)
             continue
         rows.append({
             "task": task, "profile": item.profile, "ontology": item.name,
-            "expected": result.answer,
+            "expected": answer,
             "count": "" if result.count is None else result.count,
             "reference_seconds": f"{result.seconds:.4f}",
         })

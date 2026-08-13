@@ -129,14 +129,26 @@ def axioms_signature(components: Iterable) -> Tuple[str, int]:
     return digest, len(lines)
 
 
+#: Signature line emitted for a hierarchy task (classification / realisation /
+#: instantiation) when the ontology is inconsistent. Such an ontology entails
+#: everything and so has no hierarchy to compare -- the verdict is the answer.
+#: ``run_native.py`` reports the same case as ``status=inconsistent`` with an
+#: empty ``answer``; both sides must agree or a hash would be scored against a
+#: verdict and could never match.
+INCONSISTENT_LINE = "inconsistent"
+
+
 def emit_line(task: str, reasoner) -> str:
     """Machine-readable one-line result for the ``run --signature`` protocol.
 
-    ``consistency`` -> ``consistent true`` / ``consistent false``
-    other tasks     -> ``axioms <count> <sha256>``
+    ``consistency``  -> ``consistent true`` / ``consistent false``
+    other tasks      -> ``axioms <count> <sha256>``, or :data:`INCONSISTENT_LINE`
+                        when the ontology is inconsistent
     """
     if task == "consistency":
         return f"consistent {'true' if reasoner.is_consistent() else 'false'}"
+    if not reasoner.is_consistent():
+        return INCONSISTENT_LINE
     wanted = set(TASK_AXIOMS[task])
     components = [c for c in reasoner.inferred_axioms()
                  if type(c).__name__ in wanted]
@@ -148,7 +160,10 @@ def parse_line(task: str, line: str) -> Optional[str]:
     """Extract the comparable answer from a ``run --signature`` line.
 
     Returns ``true``/``false`` for consistency or the axiom-set hash for other
-    tasks, or ``None`` if the line is not a valid signature line.
+    tasks, or ``None`` if the line carries no comparable answer -- which covers
+    both a malformed line and :data:`INCONSISTENT_LINE`, since an inconsistent
+    ontology has no hierarchy to hash. Callers must therefore test for
+    :data:`INCONSISTENT_LINE` themselves before treating ``None`` as an error.
     """
     parts = line.strip().split()
     if task == "consistency":

@@ -21,6 +21,16 @@ through in-memory callbacks (equivalence groups and direct subsumption
 edges), from which the inferred `SubClassOf`/`EquivalentClasses` axioms are
 constructed — no file exchange in either direction.
 
+## Known issues
+Two correctness caveats inherited from Konclude itself affect this package:
+unqualified data cardinality restrictions (`DataMaxCardinality(1 :p)` and
+friends, written without a data range) are silently ignored and can make an
+inconsistent ontology report as consistent, and classification is
+nondeterministic on some ABox-bearing ontologies — repeated runs over the same
+unchanged input can return contradictory hierarchies. Both are documented in
+full, with reproductions, under [Known issues in
+konclude-rs](../konclude-rs/README.md#known-issues).
+
 ## Requirements
 Konclude must be built as a shared library with its C interface enabled:
 
