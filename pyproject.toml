@@ -22,7 +22,45 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: PyPy",
 ]
 
+[project.urls]
+Homepage = "https://github.com/ontology-tools/py-konclude"
+Repository = "https://github.com/ontology-tools/py-konclude"
+Issues = "https://github.com/ontology-tools/py-konclude/issues"
+"Reasoning core" = "https://github.com/ontology-tools/konclude-rs"
+
 [tool.maturin]
 # Bundle the Konclude shared library (copied to pykonclude/lib/ by the
 # wheel build, see `make wheel`) so the wheel is self-contained.
 include = [{ path = "pykonclude/lib/*", format = "wheel" }]
+
+[tool.cibuildwheel]
+# The wheel is py3-none-<platform> (cdylib, not an extension module), so one
+# interpreter per platform suffices. musllinux needs its own Qt 5 / Konclude
+# build and is not supported.
+build = "cp312-*"
+skip = "*-musllinux_*"
+# Builds libKonclude into pykonclude/lib/ for the maturin include above.
+# Applies to macOS; linux and windows override below.
+before-all = "bash {project}/ci/build-konclude.sh"
+
+[tool.cibuildwheel.linux]
+# Must match the workflow's "Build libKonclude" image (same glibc).
+manylinux-x86_64-image = "manylinux_2_28"
+manylinux-aarch64-image = "manylinux_2_28"
+# manylinux images ship no Rust toolchain. --default-toolchain none leaves the
+# choice to rust-toolchain.toml, so the container builds with the same pinned
+# rustc as everywhere else instead of whatever stable is on the day.
+# build-konclude.sh no-ops when the workflow has already built the library.
+before-all = [
+    "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none",
+    "bash {project}/ci/build-konclude.sh",
+]
+environment = { PATH = "$HOME/.cargo/bin:$PATH" }
+
+[tool.cibuildwheel.windows]
+# The workflow installs Qt as win64_msvc2019_64.
+archs = ["AMD64"]
+before-all = "{project}\\ci\\build-konclude.bat"
+# Not repaired by default; Konclude.dll needs Qt5 vendored beside it, and Qt is
+# not on the DLL search path during repair.
+repair-wheel-command = "delvewheel repair -w {dest_dir} {wheel} --add-path %QT_ROOT_DIR%\\bin"

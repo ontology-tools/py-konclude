@@ -1,0 +1,13 @@
+# Pinned so every wheel we publish is built by one known compiler.
+#
+# This is not a free choice: py-horned-owl loads the plugin across a *Rust* ABI
+# boundary, which is not stable between compiler releases. This version must
+# stay in step with the rustc that built the py-horned-owl wheel the release is
+# meant to work with -- ci/check_abi.py enforces that in CI, and CLAUDE.md's
+# "Rust-ABI plugin boundary" note explains the failure mode.
+[toolchain]
+channel = "1.96.0"
+profile = "minimal"
+# minimal omits both; clippy in particular is worth the small download, since
+# pinning the channel would otherwise make `cargo clippy` stop working locally.
+components = ["clippy", "rustfmt"]

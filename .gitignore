@@ -7,10 +7,36 @@ venv
 dist
 *.egg-info
 
-Cargo.lock
+# Cargo.lock is deliberately checked in: konclude-rs and py-horned-owl-reasoner
+# are git dependencies, so without it every build -- including a release --
+# silently takes whatever is on their default branch.
+
+# local path override for the konclude-rs git dependency (see CLAUDE.md)
+.cargo/
 
 **/__pycache__
 .vscode
 wheelhouse
 pykonclude/pykonclude/
 pykonclude/lib/
+
+# Konclude checkout made by CI, or a local clone/symlink in the same place
+# (ci/build-konclude.sh builds it in place), and a konclude-rs checkout for the
+# .cargo/config.toml path override. No trailing slash: that would only match a
+# real directory, not a symlink to one.
+/Konclude
+/konclude-rs
+
+# Ontology corpora: pool_sample is ~34 GB from Zenodo, verified/ is downloaded
+# by ore_test/fetch_verified.py. Both are fetched on demand, never committed --
+# ore_test/results/README.md says where each comes from.
+ore_test/dataset
+
+# Benchmark run output. The two files under it that are *reference* data, not
+# output, are force-added: see ore_test/results/README.md.
+ore_test/results/*
+!ore_test/results/README.md
+!ore_test/results/ore2015_published_results.csv
+
+# OWL/XML conversions + results produced by ore_test/run_native.py
+**/.owx-cache/
