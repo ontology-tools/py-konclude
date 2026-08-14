@@ -11,38 +11,54 @@ belongs in konclude-rs, not here.**
 ## Build & test
 
 ```bash
-make bundle     # build ../Konclude as a shared lib -> pykonclude/lib/libKonclude.so
-make test       # cargo test with KONCLUDE_LIBRARY_PATH set
+make bundle     # build ./Konclude as a shared lib -> pykonclude/lib/libKonclude.so
+make plugin     # cargo build --release + copy the cdylib where the tests load it
+make test       # bundle + plugin + pytest with KONCLUDE_LIBRARY_PATH set
 make wheel      # bundle + maturin build + auditwheel -> wheelhouse/
 ```
 
 `make bundle` (`make konclude` is an alias) delegates to
 `ci/build-konclude.sh`, the same script CI runs — see "CI" below.
 
-Python tests (`test/`, pytest, venv at `.venv`) load the plugin cdylib from
-`pykonclude/pykonclude/*.so` — **after any Rust change** rebuild and copy it:
+The Konclude checkout lives at `Konclude/` **inside this repo** (gitignored;
+a clone, or a symlink to one elsewhere) — the same path CI checks it out to
+and the default in the Makefile, both build scripts and `ore_test`.
+`KONCLUDE_DIR` overrides it everywhere; nothing assumes a sibling
+`../Konclude` any more.
 
-```bash
-cargo build --release
-cp target/release/libpykonclude.so pykonclude/pykonclude/
-```
+The Python suite (`test/`, pytest, venv at `.venv`) **is** the test suite:
+this crate is a trait adapter with no logic of its own, the reasoning is
+tested in konclude-rs, and only going through py-horned-owl exercises the
+plugin ABI boundary. There are deliberately no `#[test]`s here. The tests load
+the plugin cdylib from `pykonclude/pykonclude/*.so`, so **after any Rust
+change** it has to be rebuilt and copied — `make test` does that via
+`make plugin`.
 
 `pykonclude.create_reasoner()` points `KONCLUDE_LIBRARY_PATH` at the bundled
-`pykonclude/lib/libKonclude.so` unless the env var is already set (env wins).
+`pykonclude/lib/libKonclude.so` unless the env var is already set (env wins),
+and raises with a build hint when neither is available.
+
+The Rust toolchain is pinned in `rust-toolchain.toml` — see the ABI gotcha
+below for why it is not a free choice.
 
 ## Working against a local konclude-rs
 
-`Cargo.toml` depends on `konclude-rs` **via git**, not `../konclude-rs`:
-cibuildwheel builds the project in an isolated directory (a container, on
-Linux), so a sibling checkout is not reachable and a path dependency breaks
-every CI build at `cargo metadata`.
+`Cargo.toml` depends on `konclude-rs` **via git**, not by path: cibuildwheel
+builds the project in an isolated directory (a container, on Linux), so a
+local checkout is not reachable and a path dependency breaks every CI build
+at `cargo metadata`.
 
-For co-development, override the git dependency with the local checkout via
-a (gitignored) `.cargo/config.toml`:
+For co-development, put the checkout at `konclude-rs/` inside this repo
+(clone, or symlink one from elsewhere — same convention as `Konclude/`, and
+gitignored likewise) and override the git dependency with a (gitignored)
+`.cargo/config.toml`:
 
 ```toml
-paths = ["../konclude-rs"]
+paths = ["konclude-rs"]
 ```
+
+The path is relative to the config file's parent directory, i.e. the
+repository root.
 
 Verify which source is in use with:
 
@@ -54,15 +70,32 @@ cargo tree -i konclude-rs | head -1
 
 A path override only applies while the local crate's version and dependency
 list match the git one — after changing konclude-rs's `Cargo.toml`, push it
-and let CI resolve the new commit (`Cargo.lock` is not checked in, so CI
-always takes konclude-rs `main` at build time).
+and update the lock (below).
+
+`Cargo.lock` **is** checked in, and it is what pins the two git dependencies:
+neither `konclude-rs` nor `py-horned-owl-reasoner` has a `rev` in
+`Cargo.toml`, so without the lock every build — including a release — would
+silently take whatever is on their default branch. Bump them deliberately:
+
+```bash
+cargo update -p konclude-rs -p py-horned-owl-reasoner
+```
+
+A `paths` override does not rewrite the lock, so local co-development leaves
+it alone.
 
 ## CI
 
-`.github/workflows/CI.yaml` builds wheels with cibuildwheel for five targets
-(linux x86_64/aarch64, macOS intel/arm, Windows x64); the cibuildwheel
-settings themselves live in `[tool.cibuildwheel]` in `pyproject.toml`, so
+`.github/workflows/CI.yaml` builds wheels with cibuildwheel for four targets
+(linux x86_64/aarch64, macOS intel, Windows x64); the cibuildwheel settings
+themselves live in `[tool.cibuildwheel]` in `pyproject.toml`, so
 `uvx cibuildwheel --print-build-identifiers` reproduces what CI selects.
+
+There is **no macOS arm64 wheel**: Qt 5.15's official open-source macOS
+binaries are x86_64-only and Konclude does not build against Qt 6, so Apple
+Silicon runs the intel wheel under Rosetta. (Homebrew's `qt@5` does have arm
+bottles, but it is deprecated and would put the two macOS legs on different Qt
+sources.)
 
 - The wheel is `py3-none-<platform>`: the plugin is a cdylib loaded through
   `cffi.dlopen`, not a CPython extension module. `build = "cp312-*"` therefore
@@ -71,8 +104,9 @@ settings themselves live in `[tool.cibuildwheel]` in `pyproject.toml`, so
 - `ci/build-konclude.sh` (`.bat` on Windows) builds `KoncludeCLIB.pro` and
   installs the result into `pykonclude/lib/`. It no-ops when the library is
   already there, which is what makes the cache and the two entry points below
-  compose. Qt comes from `dnf` in the manylinux image, Homebrew on macOS, and
-  `jurplel/install-qt-action` on Windows.
+  compose. Qt comes from `dnf` in the manylinux image and from
+  `jurplel/install-qt-action` on macOS and Windows. The script still falls back
+  to Homebrew `qt@5` when it finds no qmake, which is the local-macOS path.
 - macOS/Windows run that script through cibuildwheel's `before-all`. **Linux
   cannot**: `before-all` runs inside a container whose filesystem is discarded,
   so nothing would reach the cache. The workflow instead runs the script in the
@@ -81,7 +115,17 @@ settings themselves live in `[tool.cibuildwheel]` in `pyproject.toml`, so
   sync or libKonclude and the wheel get different glibcs.
 - The manylinux images have no Rust toolchain (the macOS/Windows runners do),
   so `[tool.cibuildwheel.linux].before-all` installs rustup and `environment`
-  puts `~/.cargo/bin` on `PATH`.
+  puts `~/.cargo/bin` on `PATH`. It installs `--default-toolchain none` so the
+  version comes from `rust-toolchain.toml` rather than whatever stable is
+  current.
+- The `test` job runs `ci/check_abi.py` before pytest: it compares the rustc
+  version stamped into the plugin against the one in the py-horned-owl wheel
+  pip resolved from PyPI, and fails on a mismatch. Without it a wheel built by
+  the wrong compiler passes CI and corrupts results in the field.
+- `upload_pypi` is the only publishing job, gated to published releases.
+  Nothing uploads to TestPyPI: a publish job that also fires on
+  `pull_request` fails on every fork PR (no `id-token: write`) and uploads
+  unreviewed code from same-repo ones.
 - Konclude needs **Qt 5** (5.11+, qtbase only — no Redland in the clib build).
   It will not build against Qt 6: it carries patched copies of Qt 5 container
   internals.
@@ -99,9 +143,11 @@ settings themselves live in `[tool.cibuildwheel]` in `pyproject.toml`, so
   py-horned-owl wheel and this cdylib must be built by the **same rustc**,
   with matching `horned-owl` / `py-horned-owl-reasoner` crate versions.
   Mismatch symptoms look impossible (Ok/Err swapped, garbage strings,
-  free() aborts). First check:
-  `strings <lib> | grep -oE "rustc version [0-9.]+"` on both binaries.
-  PyPI wheels (CI-pinned rustc) generally don't work with locally built
+  free() aborts). First check: `python ci/check_abi.py`, which compares the
+  rustc version stamped into both binaries (by hand:
+  `strings <lib> | grep -oE "rustc version [0-9.]+"`). `rust-toolchain.toml`
+  pins our side; it must track the rustc that built the py-horned-owl release
+  being targeted. PyPI wheels generally don't work with locally built
   plugins — build py-horned-owl locally too.
 - **Stale wheels**: `target/wheels` must be cleared before a maturin build
   (the Makefile does). `uv pip install --reinstall` can hardlink a stale
@@ -116,7 +162,13 @@ settings themselves live in `[tool.cibuildwheel]` in `pyproject.toml`, so
 
 ## ORE benchmark (`ore_test/`)
 
-Self-contained harness with its own README. Current standing vs the native
+Self-contained harness with its own README. Neither corpus is committed —
+`dataset/pool_sample` is ~34 GB from Zenodo and `dataset/verified` comes from
+`fetch_verified.py`; `main.py` fails with the fetch instructions for whichever
+is missing. Only `results/README.md` and `results/ore2015_published_results.csv`
+are tracked (reference data); everything else under `results/` is run output.
+
+Current standing vs the native
 Konclude binary (200 DL consistency problems): 195/195 checkable agreement,
 overall 1.75x slower (geomean 2.43x — small ontologies are dominated by
 ~50–150 ms Python-startup + parse overhead per subprocess). Known gaps: SWRL

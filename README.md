@@ -2,7 +2,7 @@
 A wrapper around the [Konclude](https://github.com/konclude/Konclude) OWL DL reasoner to use it in Python via [py-horned-owl](https://github.com/ontology-tools/py-horned-owl/).
 
 This package is a thin Python-binding layer over the native
-[konclude-rs](../konclude-rs) crate: `konclude-rs` does the reasoning
+[konclude-rs](https://github.com/ontology-tools/konclude-rs) crate: `konclude-rs` does the reasoning
 (loading Konclude, translating the ontology, querying results), while
 py-konclude adapts its `KoncludeReasoner` to py-horned-owl's reasoner
 interface and packages it as a Python wheel. To use Konclude directly from
@@ -29,10 +29,30 @@ inconsistent ontology report as consistent, and classification is
 nondeterministic on some ABox-bearing ontologies — repeated runs over the same
 unchanged input can return contradictory hierarchies. Both are documented in
 full, with reproductions, under [Known issues in
-konclude-rs](../konclude-rs/README.md#known-issues).
+konclude-rs](https://github.com/ontology-tools/konclude-rs#known-issues).
 
 ## Requirements
-Konclude must be built as a shared library with its C interface enabled:
+Konclude must be built as a shared library with its C interface enabled.
+Clone (or symlink) it as `Konclude/` inside this repository — the location
+`make` and the CI build script both expect — and build it with `make
+konclude`:
+
+```bash
+git clone https://github.com/ontology-tools/Konclude
+# or, against an existing checkout elsewhere: ln -s /path/to/Konclude Konclude
+make konclude
+```
+
+Note the repository: `ontology-tools/Konclude` is the fork that adds the
+`KoncludeCLIB.pro` target — the C interface this package loads through
+`dlopen`. Upstream `konclude/Konclude` does not ship that target, so a
+checkout of it will not build here.
+
+`Konclude/` is gitignored, so either form leaves the working tree clean. To
+build from a checkout in another location without a symlink, point
+`KONCLUDE_DIR` at it (`make KONCLUDE_DIR=/path/to/Konclude konclude`).
+
+The equivalent by hand, if you would rather not go through `make`:
 
 ```bash
 cd Konclude
@@ -40,9 +60,6 @@ qmake -o Makefile-clib KoncludeCLIB.pro
 make -f Makefile-clib -j$(nproc)
 # produces Release-clib/libKonclude.so
 ```
-
-(or `make konclude` in this repository, with `KONCLUDE_DIR` pointing at the
-Konclude checkout, default `../Konclude`).
 
 Wheels built with `make wheel` bundle `libKonclude.so`, so nothing needs to
 be installed separately at runtime. When the library is not bundled (e.g. a
@@ -78,7 +95,7 @@ reasoner.inferred_axioms()
 [auditwheel](https://github.com/pypa/auditwheel)) and `patchelf`:
 
 ```bash
-make konclude   # build libKonclude.so in $KONCLUDE_DIR (default ../Konclude)
+make konclude   # build libKonclude.so in $KONCLUDE_DIR (default ./Konclude)
 make wheel      # bundle it and build + repair the wheel
 pip install wheelhouse/py_konclude-*.whl
 ```
@@ -94,11 +111,23 @@ behaviour. Keep the py-konclude release in lockstep with the py-horned-owl
 release it is built against.
 
 ### From source
-Install the Python package directly with `pip install .` (the wheel then
-only bundles Konclude if `pykonclude/lib/libKonclude.so` exists, see above;
-otherwise set `KONCLUDE_LIBRARY_PATH` at runtime).
+Install the Python package directly with `pip install .`. This needs a Rust
+toolchain, and it bundles Konclude only if `pykonclude/lib/libKonclude.so`
+already exists (run `make bundle` first, see above). Without it the package
+installs fine but `create_reasoner` refuses to run until
+`KONCLUDE_LIBRARY_PATH` points at a Konclude shared library.
+
+The same applies to the sdist on PyPI: it carries no Konclude, because
+building one needs Qt 5 and the Konclude sources, neither of which can be
+shipped usefully in a source distribution. **On any platform we publish a
+wheel for, install the wheel** — the sdist is there for redistribution, not
+for `pip install py-konclude`.
 
 ## Tests
 ```bash
-KONCLUDE_LIBRARY_PATH=/path/to/libKonclude.so cargo test
+make test     # builds Konclude + the plugin, then runs the pytest suite
 ```
+
+The tests exercise the reasoner through py-horned-owl, which is the only way
+to cover the plugin ABI boundary; there are no Rust unit tests (the reasoning
+itself is tested in [konclude-rs](https://github.com/ontology-tools/konclude-rs)).
