@@ -207,14 +207,53 @@ class BatchResult:
 
 
 def default_dataset() -> str:
-    """Path of the bundled ORE ``pool_sample`` dataset, next to this script."""
+    """Path of the ORE ``pool_sample`` dataset, next to this script.
+
+    Not committed -- the corpus is ~34 GB. :func:`check_dataset` explains how
+    to get it when it is missing.
+    """
     return os.path.join(os.path.dirname(os.path.abspath(__file__)),
                         "dataset", "pool_sample")
+
+
+#: How to obtain each dataset the runner knows about, by directory name.
+_DATASET_HELP = {
+    "pool_sample": (
+        "The ORE 2015 competition corpus is not in this repository (~34 GB).\n"
+        "Download ore2015_sample.zip from https://zenodo.org/records/18578 and\n"
+        "unpack it so that {dataset}/files/ and {dataset}/<profile>/<task>/\n"
+        "fileorder.txt exist."
+    ),
+    "verified": (
+        "The verified gold set is downloaded on demand. Fetch it with:\n"
+        "    python fetch_verified.py"
+    ),
+}
+
+
+def check_dataset(dataset: str) -> None:
+    """Fail with an actionable message if ``dataset`` is not on disk.
+
+    Both corpora the runner uses are fetched rather than committed, so a fresh
+    clone hits this first; say where each comes from instead of surfacing a
+    bare missing-file error deep inside the run.
+    """
+    if os.path.isdir(dataset):
+        return
+    hint = _DATASET_HELP.get(os.path.basename(dataset.rstrip(os.sep)))
+    message = f"dataset not found: {dataset}"
+    if hint:
+        message += "\n\n" + hint.format(dataset=dataset)
+    else:
+        message += ("\n\nExpected a directory holding files/ and "
+                    "<profile>/<task>/fileorder.txt; see ore_test/README.md.")
+    raise SystemExit(f"error: {message}")
 
 
 def iter_dataset(dataset: str, task: str, profiles: Sequence[str],
                  limit: Optional[int]) -> Iterator[BatchItem]:
     """Yield the ontologies for ``task`` in ``profiles`` per their fileorder."""
+    check_dataset(dataset)
     task_dir = _DATASET_TASK_DIR[task]
     count = 0
     for profile in profiles:
@@ -599,8 +638,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                         args.reasoner, args.input_format, args.signature)
 
     try:
-        if not os.path.isdir(args.dataset):
-            raise FileNotFoundError(f"dataset not found: {args.dataset}")
+        check_dataset(args.dataset)
         profiles = _profiles(args.dataset, args.task, args.profile)
         if args.command == "batch":
             return run_batch(args.task, args.dataset, profiles,

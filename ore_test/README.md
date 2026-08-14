@@ -88,6 +88,17 @@ dataset/pool_sample ORE 2015 pool subset (ontologies + fileorder lists)
 results/            published ORE 2015 competition results (reference data)
 ```
 
+Neither corpus under `dataset/` is committed, so a fresh clone has to fetch
+them first — `main.py` prints how for whichever is missing:
+
+- `dataset/verified` — `python fetch_verified.py`
+- `dataset/pool_sample` — `ore2015_sample.zip` (~725 MB packed, ~34 GB
+  unpacked) from <https://zenodo.org/records/18578>, unpacked so that
+  `files/` and `<profile>/<task>/fileorder.txt` sit directly under it
+
+Under `results/` only `README.md` and `ore2015_published_results.csv` are
+tracked; the CSVs and plots beside them are output from local runs.
+
 ## Notes
 
 - **Native baseline inputs** ([`run_native.py`](run_native.py)) are the
