@@ -41,10 +41,13 @@ jobs:
           # does not build against Qt 6. Apple Silicon users run the x86_64
           # wheel under Rosetta.
           - os: macos-intel
-            # macos-13 was the last x86_64 runner
-            runs-on: macos-13
-            # the runner's own OS; the Qt 5.15.2 binaries below support 10.13+,
-            # so this can be lowered once a wheel built that way is verified
+            # the x86_64 runner: macos-13 was retired on 2025-12-04 and its
+            # label now queues forever instead of failing. Intel support ends
+            # with the macOS 15 image in autumn 2027.
+            runs-on: macos-15-intel
+            # oldest macOS the wheel installs on; the Qt 5.15.2 binaries below
+            # support 10.13+, so this can be lowered once a wheel built that
+            # way is verified
             macos-target: '13.0'
 
     steps:
@@ -146,8 +149,8 @@ jobs:
         #     runs-on: windows-11-arm
           # no macos-arm: no arm64 wheel is built, see build_wheels above
           - os: macos-intel
-            # macos-13 was the last x86_64 runner
-            runs-on: macos-13
+            # the x86_64 runner, see build_wheels above
+            runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
         with:
