@@ -129,6 +129,11 @@ sources.)
 - Konclude needs **Qt 5** (5.11+, qtbase only — no Redland in the clib build).
   It will not build against Qt 6: it carries patched copies of Qt 5 container
   internals.
+- The Windows leg pins the MSVC toolset to **v143 (`14.44`)** via
+  `ilammy/msvc-dev-cmd`. `windows-latest` is Visual Studio 2026 since June
+  2026, and its STL removed `stdext::make_checked_array_iterator`, which Qt
+  5.15's `qlist.h` calls unconditionally under MSVC (`error C2653: 'stdext'`).
+  The VS 2026 image still carries v143 for compatibility.
 - The Konclude revision is pinned in the workflow's `KONCLUDE_REF`; bump it to
   pick up reasoner changes. `pykonclude/lib` is cached under that key because
   a cold Konclude build is ~1300 translation units and 20+ minutes.
