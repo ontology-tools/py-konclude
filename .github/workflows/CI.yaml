@@ -36,16 +36,16 @@ jobs:
             runs-on: windows-latest
         #   - os: windows-arm
         #     runs-on: windows-11-arm
+          # No macos-arm leg: Qt 5.15 has no arm64 macOS build (the official
+          # open-source binaries stop at 5.15.2, x86_64 only), and Konclude
+          # does not build against Qt 6. Apple Silicon users run the x86_64
+          # wheel under Rosetta.
           - os: macos-intel
             # macos-13 was the last x86_64 runner
             runs-on: macos-13
-            # Homebrew's qt@5 bottle is built for the runner's OS, so the
-            # wheel cannot claim compatibility with anything older
+            # the runner's own OS; the Qt 5.15.2 binaries below support 10.13+,
+            # so this can be lowered once a wheel built that way is verified
             macos-target: '13.0'
-          - os: macos-arm
-            # macos-14+ (including latest) are ARM64 runners
-            runs-on: macos-latest
-            macos-target: '14.0'
 
     steps:
       - uses: actions/checkout@v4
@@ -80,14 +80,16 @@ jobs:
           # the container runs as root; hand the artefacts back to the runner
           sudo chown -R "$(id -u):$(id -g)" pykonclude/lib Konclude
 
-      # macOS gets Qt from Homebrew inside ci/build-konclude.sh. Windows has no
-      # equivalent, so install Qt and an MSVC environment for nmake here.
+      # Linux gets Qt from dnf inside the manylinux container (above). macOS and
+      # Windows take the official Qt binaries: pinned, and not subject to
+      # Homebrew deprecating qt@5 out from under the build. The action puts
+      # qmake on PATH, which is all ci/build-konclude.sh needs.
       - name: Install Qt 5
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' || runner.os == 'macOS'
         uses: jurplel/install-qt-action@v4
         with:
           version: '5.15.2'
-          arch: win64_msvc2019_64
+          arch: ${{ runner.os == 'Windows' && 'win64_msvc2019_64' || 'clang_64' }}
 
       - name: Set up MSVC
         if: runner.os == 'Windows'
@@ -134,17 +136,16 @@ jobs:
             runs-on: windows-latest
         #   - os: windows-arm
         #     runs-on: windows-11-arm
+          # no macos-arm: no arm64 wheel is built, see build_wheels above
           - os: macos-intel
             # macos-13 was the last x86_64 runner
             runs-on: macos-13
-          - os: macos-arm
-            # macos-14+ (including latest) are ARM64 runners
-            runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
         with:
           sparse-checkout: |
             test
+            ci
       - uses: actions/setup-python@v5
         with:
           python-version: '3.10' 
@@ -159,6 +160,15 @@ jobs:
         # --only-binary: dist also holds the sdist, and silently building that
         # from source here would test a different artefact than we ship
         run: pip install --only-binary=py-konclude --find-links=dist pytest py-konclude
+
+      # The plugin is loaded across a Rust ABI boundary, so it and the
+      # py-horned-owl wheel pip just resolved from PyPI must come from the same
+      # rustc. A mismatch is undefined behaviour that presents as nonsense
+      # results rather than a load failure, so check it before trusting a green
+      # test run.
+      - name: Check Rust ABI compatibility
+        run: python ci/check_abi.py
+
       - name: Test with pytest
         run: pytest --doctest-modules --junitxml=junit/test-results-${{ matrix.os }}.xml test/
       - name: Upload pytest test results
@@ -187,29 +197,3 @@ jobs:
           merge-multiple: true
 
       - uses: pypa/gh-action-pypi-publish@release/v1
-
-  upload_test_pypi:
-    needs: [test,build_wheels, build_sdist]
-    runs-on: ubuntu-latest
-
-    environment:
-      name: testpypi
-      url: https://test.pypi.org/p/py-konclude
-
-    permissions:
-      id-token: write  # IMPORTANT: mandatory for trusted publishing
-
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          # unpacks all CIBW artifacts into dist/
-          pattern: cibw-*
-          path: dist
-          merge-multiple: true
-
-      - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          repository-url: https://test.pypi.org/legacy/
-          # this job is unconditional, so every push to main re-uploads the
-          # same version -- don't fail the workflow over it
-          skip-existing: true
