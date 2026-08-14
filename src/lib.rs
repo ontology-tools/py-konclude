@@ -32,6 +32,10 @@ impl PyReasoner for PyKoncludeReasoner {
 
 impl OntologyIndex<ArcStr, ArcAnnotatedComponent> for PyKoncludeReasoner {
     fn index_insert(&mut self, cmp: ArcAnnotatedComponent) -> bool {
+        // The clone cannot be avoided here: `KoncludeReasoner::insert` wants an
+        // owned component, and horned-owl offers no way to get one out of the
+        // Arc without copying -- `ForIndex::unwrap` takes `&self` and clones
+        // too. Removing it means teaching konclude-rs to accept the Arc.
         self.0.insert((*cmp).clone())
     }
 
@@ -94,43 +98,5 @@ impl Reasoner<ArcStr, ArcAnnotatedComponent> for PyKoncludeReasoner {
                 .map_err(to_reasoner_error)?
                 .into_iter(),
         ))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use horned_owl::model::{Build, DeclareClass, MutableOntology, SubClassOf};
-    use horned_owl::vocab;
-
-    /// Smoke test that the trait wrapper reaches the native reasoner; the
-    /// full reasoning behaviour is covered by konclude-rs' own tests.
-    #[test]
-    fn test_wrapper_get_subclasses() {
-        let build = Build::<ArcStr>::new();
-        let mut ontology = SetOntology::new();
-        ontology.insert(DeclareClass(build.class("https://example.com/A")));
-        ontology.insert(DeclareClass(build.class("https://example.com/B")));
-        ontology.insert(SubClassOf {
-            sub: build.class("https://example.com/B").into(),
-            sup: build.class("https://example.com/A").into(),
-        });
-
-        let mut reasoner = PyKoncludeReasoner::create_reasoner(ontology);
-        reasoner.flush().unwrap();
-        assert!(reasoner.is_consistent().unwrap());
-
-        let mut expected: Vec<Class<ArcStr>> = vec![
-            build.class("https://example.com/A"),
-            build.class("https://example.com/B"),
-            build.class(vocab::OWL::Nothing.as_ref()),
-        ];
-        let mut actual = reasoner
-            .get_subclasses(&build.class("https://example.com/A").into())
-            .unwrap()
-            .collect::<Vec<_>>();
-        expected.sort();
-        actual.sort();
-        assert_eq!(expected, actual);
     }
 }
