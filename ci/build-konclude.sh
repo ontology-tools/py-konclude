@@ -28,15 +28,14 @@ case $(uname -s) in
         ;;
 esac
 
-# The workflow caches pykonclude/lib keyed on the Konclude revision -- a cold
-# build is ~1300 translation units and takes upwards of 20 minutes, so a cache
-# hit should short-circuit the whole script.
+# The workflow caches pykonclude/lib keyed on the Konclude revision, and on
+# Linux it builds the library outside cibuildwheel entirely -- either way the
+# compile below is skipped. A cold build is ~1300 translation units and takes
+# upwards of 20 minutes; Qt is set up regardless, see below.
+lib_present=false
 if [ -f "$dest_dir/$lib_name" ]; then
-    echo "$dest_dir/$lib_name already present -- skipping Konclude build"
-    exit 0
-fi
-
-if [ ! -f "$konclude_dir/KoncludeCLIB.pro" ]; then
+    lib_present=true
+elif [ ! -f "$konclude_dir/KoncludeCLIB.pro" ]; then
     echo "error: no Konclude checkout at $konclude_dir" >&2
     exit 1
 fi
@@ -45,6 +44,11 @@ fi
 # Konclude needs Qt 5.11+ (core, xml, network, concurrent -- all of qtbase).
 # It does *not* build against Qt 6: it carries patched copies of Qt 5's
 # container internals (Source/Utilities/Container/CQtManagedRestricted*).
+#
+# This runs even when the library is already built: libKonclude links Qt, and
+# auditwheel/delocate resolve those DT_NEEDED entries from the system to vendor
+# them into the wheel. Without Qt here the repair step fails with
+# 'required library "libQt5Concurrent.so.5" could not be located'.
 
 find_qmake() {
     local candidate
@@ -101,6 +105,11 @@ case $qt_version in
 esac
 
 # --- build -----------------------------------------------------------------
+
+if $lib_present; then
+    echo "$dest_dir/$lib_name already present -- skipping Konclude build"
+    exit 0
+fi
 
 cd "$konclude_dir"
 "$qmake_bin" -o Makefile-clib KoncludeCLIB.pro

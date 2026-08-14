@@ -102,9 +102,13 @@ sources.)
   builds **one** wheel per platform — every interpreter would emit the same
   file.
 - `ci/build-konclude.sh` (`.bat` on Windows) builds `KoncludeCLIB.pro` and
-  installs the result into `pykonclude/lib/`. It no-ops when the library is
-  already there, which is what makes the cache and the two entry points below
-  compose. Qt comes from `dnf` in the manylinux image and from
+  installs the result into `pykonclude/lib/`. It skips the *compile* when the
+  library is already there, which is what makes the cache and the two entry
+  points below compose, but it still sets Qt up: the wheel-repair step resolves
+  libKonclude's Qt dependencies from the system to vendor them, and inside the
+  cibuildwheel container nothing else installs them (skipping that is how
+  `auditwheel` came to fail with `required library "libQt5Concurrent.so.5"
+  could not be located`). Qt comes from `dnf` in the manylinux image and from
   `jurplel/install-qt-action` on macOS and Windows. The script still falls back
   to Homebrew `qt@5` when it finds no qmake, which is the local-macOS path.
 - macOS/Windows run that script through cibuildwheel's `before-all`. **Linux
