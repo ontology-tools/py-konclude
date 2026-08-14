@@ -6,7 +6,7 @@
 # meant to work with -- ci/check_abi.py enforces that in CI, and CLAUDE.md's
 # "Rust-ABI plugin boundary" note explains the failure mode.
 [toolchain]
-channel = "1.96.0"
+channel = "1.97.0"
 profile = "minimal"
 # minimal omits both; clippy in particular is worth the small download, since
 # pinning the channel would otherwise make `cargo clippy` stop working locally.
