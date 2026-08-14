@@ -144,6 +144,8 @@ sources.)
 - auditwheel/delocate/delvewheel vendor Qt next to the bundled library even
   though nothing links against it at build time — they scan every shared
   object in the wheel, not just extension modules. Expect ~90 MB wheels.
+  cibuildwheel bundles auditwheel and delocate but **not** delvewheel, so the
+  Windows leg installs it in `[tool.cibuildwheel.windows].before-build`.
 
 ## Gotchas
 

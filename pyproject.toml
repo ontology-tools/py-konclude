@@ -62,5 +62,7 @@ environment = { PATH = "$HOME/.cargo/bin:$PATH" }
 archs = ["AMD64"]
 before-all = "{project}\\ci\\build-konclude.bat"
 # Not repaired by default; Konclude.dll needs Qt5 vendored beside it, and Qt is
-# not on the DLL search path during repair.
+# not on the DLL search path during repair. Unlike auditwheel/delocate,
+# cibuildwheel ships no delvewheel, so the build environment has to install it.
+before-build = "pip install delvewheel"
 repair-wheel-command = "delvewheel repair -w {dest_dir} {wheel} --add-path %QT_ROOT_DIR%\\bin"
