@@ -65,4 +65,7 @@ before-all = "{project}\\ci\\build-konclude.bat"
 # not on the DLL search path during repair. Unlike auditwheel/delocate,
 # cibuildwheel ships no delvewheel, so the build environment has to install it.
 before-build = "pip install delvewheel"
-repair-wheel-command = "delvewheel repair -w {dest_dir} {wheel} --add-path %QT_ROOT_DIR%\\bin"
+# --analyze-existing: the wheel holds no .pyd, only plain DLLs (the plugin is a
+# cdylib), and delvewheel walks extension modules unless told otherwise -- it
+# reported "no external dependencies are needed" and vendored nothing.
+repair-wheel-command = "delvewheel repair -w {dest_dir} {wheel} --analyze-existing --add-path %QT_ROOT_DIR%\\bin"

@@ -8,12 +8,16 @@ not fail to load -- it corrupts results in ways that look impossible (``Ok``
 and ``Err`` swapped, garbage strings, ``free()`` aborts), so it has to be
 caught mechanically rather than by watching the test suite.
 
-Both binaries carry their compiler version as a literal ``rustc version X.Y.Z``
-string; this compares them. Run after installing the wheel::
+Both binaries carry the commit hash of the rustc that built them, in the
+``/rustc/<hash>/library/...`` paths std's panic locations are remapped to; that
+is what this compares. The human-readable ``rustc version X.Y.Z`` string is
+only emitted into the ELF ``.comment`` section, so it is reported when present
+(Linux) and left out otherwise (macOS, Windows). Run after installing the
+wheel::
 
     python ci/check_abi.py
 
-Exits non-zero on a mismatch, or when either version string cannot be found.
+Exits non-zero on a mismatch, or when either commit hash cannot be found.
 """
 
 from __future__ import annotations
@@ -26,18 +30,25 @@ from typing import List, Optional
 #: Extension-module / cdylib suffixes across the platforms we build for.
 SUFFIXES = (".so", ".dylib", ".dll", ".pyd")
 
-_RUSTC = re.compile(rb"rustc version (\d+\.\d+\.\d+)")
+_RUSTC_HASH = re.compile(rb"/rustc/([0-9a-f]{40})")
+_RUSTC_VERSION = re.compile(rb"rustc version (\d+\.\d+\.\d+)")
 
 
-def rustc_version(binary: Path) -> Optional[str]:
-    """The rustc version stamped into ``binary``, or None if absent.
+def rustc_build(binary: Path) -> Optional[str]:
+    """The rustc build that produced ``binary``, or None if it carries no hash.
 
-    Several versions can appear when dependencies were built by different
-    compilers; that itself is a mismatch, so return them all joined and let the
-    comparison fail.
+    Several can appear when dependencies were built by different compilers;
+    that itself is a mismatch, so return them all joined and let the comparison
+    fail.
     """
-    found = sorted({m.group(1).decode() for m in _RUSTC.finditer(binary.read_bytes())})
-    return "+".join(found) if found else None
+    blob = binary.read_bytes()
+    hashes = sorted({m.group(1).decode() for m in _RUSTC_HASH.finditer(blob)})
+    if not hashes:
+        return None
+    versions = sorted({m.group(1).decode() for m in _RUSTC_VERSION.finditer(blob)})
+    # the version reads better where it exists; the hash is the actual identity
+    short = "+".join(h[:9] for h in hashes)
+    return f"{'+'.join(versions)} ({short})" if versions else short
 
 
 def find_library(package: str) -> Path:
@@ -68,16 +79,16 @@ def main() -> int:
     host = find_library("pyhornedowl")
     plugin = find_library("pykonclude")
 
-    versions = {}
+    builds = {}
     for label, lib in (("py-horned-owl", host), ("py-konclude", plugin)):
-        version = rustc_version(lib)
-        if version is None:
-            print(f"error: no rustc version string in {lib}", file=sys.stderr)
+        build = rustc_build(lib)
+        if build is None:
+            print(f"error: no rustc commit hash in {lib}", file=sys.stderr)
             return 1
-        versions[label] = version
-        print(f"{label:14} rustc {version}  ({lib})")
+        builds[label] = build
+        print(f"{label:14} rustc {build}  ({lib})")
 
-    if len(set(versions.values())) > 1:
+    if len(set(builds.values())) > 1:
         print(
             "\nerror: Rust ABI mismatch -- the plugin and py-horned-owl were "
             "built by different compilers.\nLoading the reasoner is undefined "
