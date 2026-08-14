@@ -11,5 +11,9 @@ crate-type=["cdylib"]
 
 [dependencies]
 horned-owl = "^1.4"
-konclude-rs = { path = "../konclude-rs" }
+# git rather than path: cibuildwheel builds the project in an isolated
+# directory (a container, on Linux), so a `../konclude-rs` sibling is not
+# reachable from the build. For local work against a konclude-rs checkout,
+# see the `.cargo/config.toml` snippet in CLAUDE.md.
+konclude-rs = { git = "https://github.com/ontology-tools/konclude-rs" }
 py-horned-owl-reasoner = { git = "https://github.com/ontology-tools/py-horned-owl" }

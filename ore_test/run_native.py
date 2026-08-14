@@ -124,12 +124,18 @@ NATIVE_REASONERS: Dict[str, NativeReasoner] = {
 
 
 def default_konclude_binary() -> Optional[str]:
-    """Locate the Konclude binary from the environment or the usual checkout."""
+    """Locate the Konclude binary from the environment or the usual checkout.
+
+    $KONCLUDE_BINARY wins; otherwise the CLI binary of the checkout the rest of
+    the repository builds against -- $KONCLUDE_DIR, defaulting to ``Konclude/``
+    at the repository root (a clone or a symlink, see the top-level README).
+    """
     env = os.environ.get("KONCLUDE_BINARY") or os.environ.get("KONCLUDE_BIN")
     if env:
         return env
-    here = os.path.dirname(os.path.abspath(__file__))
-    guess = os.path.join(here, "..", "..", "Konclude", "Release", "Konclude")
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    konclude_dir = os.environ.get("KONCLUDE_DIR") or os.path.join(repo_root, "Konclude")
+    guess = os.path.join(konclude_dir, "Release", "Konclude")
     return guess if os.path.isfile(guess) else None
 
 
@@ -388,7 +394,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--konclude", "--binary", dest="binary",
                         default=default_konclude_binary(),
                         help="path to the reasoner binary "
-                             "(default: $KONCLUDE_BINARY or ../../Konclude/Release/Konclude)")
+                             "(default: $KONCLUDE_BINARY, else "
+                             "$KONCLUDE_DIR/Release/Konclude, else "
+                             "<repo>/Konclude/Release/Konclude)")
     parser.add_argument("--dataset", default=default_dataset(),
                         help="dataset root (default: bundled pool_sample)")
     parser.add_argument("--profile", choices=[*PROFILES, "all"], default="all",
