@@ -57,6 +57,17 @@ before-all = [
 ]
 environment = { PATH = "$HOME/.cargo/bin:$PATH" }
 
+[tool.cibuildwheel.macos]
+# py-horned-owl 1.4.1 was not built by one compiler: its macOS and Windows
+# wheels carry rustc 1.96.0 (ac68faa20) while the linux ones carry 1.97.0
+# (2d8144b78) -- the mac/win runners' preinstalled rust lagged the container's
+# rustup install. The plugin ABI is per-rustc, so these two legs have to
+# override rust-toolchain.toml to match the wheel pip installs beside them.
+# Drop both overrides once upstream pins one rustc across its legs;
+# ci/check_abi.py fails the test job if this drifts again.
+before-build = "rustup toolchain install --profile minimal 1.96.0"
+environment = { RUSTUP_TOOLCHAIN = "1.96.0" }
+
 [tool.cibuildwheel.windows]
 # The workflow installs Qt as win64_msvc2019_64.
 archs = ["AMD64"]
@@ -64,7 +75,12 @@ before-all = "{project}\\ci\\build-konclude.bat"
 # Not repaired by default; Konclude.dll needs Qt5 vendored beside it, and Qt is
 # not on the DLL search path during repair. Unlike auditwheel/delocate,
 # cibuildwheel ships no delvewheel, so the build environment has to install it.
-before-build = "pip install delvewheel"
+before-build = [
+    "pip install delvewheel",
+    # see [tool.cibuildwheel.macos] for why this leg leaves rust-toolchain.toml
+    "rustup toolchain install --profile minimal 1.96.0",
+]
+environment = { RUSTUP_TOOLCHAIN = "1.96.0" }
 # --analyze-existing: the wheel holds no .pyd, only plain DLLs (the plugin is a
 # cdylib), and delvewheel walks extension modules unless told otherwise -- it
 # reported "no external dependencies are needed" and vendored nothing.

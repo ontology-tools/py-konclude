@@ -155,11 +155,18 @@ sources.)
   with matching `horned-owl` / `py-horned-owl-reasoner` crate versions.
   Mismatch symptoms look impossible (Ok/Err swapped, garbage strings,
   free() aborts). First check: `python ci/check_abi.py`, which compares the
-  rustc version stamped into both binaries (by hand:
-  `strings <lib> | grep -oE "rustc version [0-9.]+"`). `rust-toolchain.toml`
-  pins our side; it must track the rustc that built the py-horned-owl release
-  being targeted. PyPI wheels generally don't work with locally built
-  plugins — build py-horned-owl locally too.
+  rustc commit hash stamped into both binaries (by hand:
+  `strings <lib> | grep -oE "/rustc/[0-9a-f]+" | sort -u`; the readable
+  `rustc version X.Y.Z` string exists only in ELF `.comment`, not in Mach-O or
+  PE). `rust-toolchain.toml` pins our side; it must track the rustc that built
+  the py-horned-owl release being targeted. py-horned-owl 1.4.1 is not
+  internally consistent — its macOS and Windows wheels are rustc 1.96.0
+  (`ac68faa20`), its linux ones 1.97.0 (`2d8144b78`) — so those two
+  cibuildwheel legs override the pin with `RUSTUP_TOOLCHAIN`; drop that once
+  upstream builds every leg with one compiler. No aarch64 wheel is published
+  at all, so the test job forces the pinned toolchain before pip builds
+  py-horned-owl from its sdist. PyPI wheels generally don't work with locally
+  built plugins — build py-horned-owl locally too.
 - **Stale wheels**: `target/wheels` must be cleared before a maturin build
   (the Makefile does). `uv pip install --reinstall` can hardlink a stale
   cached wheel for the same name+version even with `--no-cache` — verify

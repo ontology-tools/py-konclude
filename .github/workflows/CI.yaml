@@ -157,6 +157,7 @@ jobs:
           sparse-checkout: |
             test
             ci
+            rust-toolchain.toml
       - uses: actions/setup-python@v5
         with:
           python-version: '3.10' 
@@ -166,6 +167,17 @@ jobs:
           pattern: cibw-*
           path: dist
           merge-multiple: true
+
+      # PyPI has no aarch64 py-horned-owl wheel, so pip builds it from the
+      # sdist -- with the runner's stable rustc, which is not the one the
+      # plugin was built by. Force the pinned toolchain so the source build
+      # lands on the same ABI; the check below still verifies the result.
+      - name: Pin the Rust toolchain for source builds
+        if: matrix.os == 'linux-arm'
+        run: |
+          channel=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          rustup toolchain install --profile minimal "$channel"
+          echo "RUSTUP_TOOLCHAIN=$channel" >> "$GITHUB_ENV"
 
       - name: Install dependencies
         # --only-binary: dist also holds the sdist, and silently building that
