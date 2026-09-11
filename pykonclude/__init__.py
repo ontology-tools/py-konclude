@@ -44,6 +44,26 @@ def _find_plugin():
     return path.abspath(path.join(plugin_dir, names[0]))
 
 
+def _add_vendored_dlls_to_path():
+    """Put the wheel's vendored DLLs on the Windows loader's search path.
+
+    delvewheel repairs the wheel by name-mangling Qt and the MSVC runtime into
+    a sibling ``py_konclude.libs/`` and patching the import tables of both DLLs
+    to match. Its own loader patch calls ``os.add_dll_directory``, which only
+    covers loads that pass ``LOAD_LIBRARY_SEARCH_*``; the plugin and
+    libKonclude are loaded through ``libloading`` with no flags, whose standard
+    search order does read PATH. No-op everywhere else.
+    """
+    from os import environ, name, path, pathsep
+
+    if name != "nt":
+        return
+    libs = path.join(path.dirname(path.dirname(path.abspath(__file__))),
+                     "py_konclude.libs")
+    if path.isdir(libs) and libs not in environ.get("PATH", "").split(pathsep):
+        environ["PATH"] = libs + pathsep + environ.get("PATH", "")
+
+
 def create_reasoner(ontology):
     """
     Create a reasoner instance.
@@ -65,4 +85,5 @@ def create_reasoner(ontology):
             )
         environ[KONCLUDE_LIBRARY_ENV] = bundled
 
+    _add_vendored_dlls_to_path()
     return create_reasoner(_find_plugin(), ontology)
